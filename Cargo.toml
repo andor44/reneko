@@ -1,0 +1,10 @@
+[package]
+name = "reneko"
+version = "0.1.0"
+authors = ["Andor Uhlár <andor44@gmail.com>"]
+
+
+[dependencies]
+irc = "*"
+log = "*"
+hlua = "*"

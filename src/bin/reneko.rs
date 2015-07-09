@@ -1,10 +1,25 @@
 #![feature(slice_patterns)]
+#![feature(dynamic_lib)]
 
 extern crate irc;
 #[macro_use] extern crate log;
+extern crate kitten;
+
+use std::dynamic_lib::DynamicLibrary;
+use std::path::Path;
 
 use irc::client::prelude::*;
 use irc::client::data::command::Command::{PRIVMSG, ERROR};
+
+use kitten::Plugin;
+
+type Loader = fn() -> Box<Plugin>;
+static LOADER_NAME: &'static str = "init_plugin";
+
+struct RenekoPlugin {
+    plugin: Box<Plugin>,
+    library: DynamicLibrary,
+}
 
 fn main() {
     // Load config file
@@ -40,6 +55,10 @@ fn main() {
     // Send auth info
     server.identify().unwrap();
 
+    // Set up plugin stuff
+    let mut plugins: Vec<RenekoPlugin> = vec![];
+    DynamicLibrary::prepend_search_path(std::env::current_dir().unwrap().as_path());
+
     // Begin event loop
     for message in server.iter() {
         if let Ok(message) = message {
@@ -50,6 +69,13 @@ fn main() {
                     },
                     PRIVMSG(target, msg) => {
                         println!("[{}]<{}>{}", target, message.get_source_nickname().unwrap(), msg);
+
+                        for plugin in &plugins {
+                            let result: Option<String> = plugin.plugin.process_privmsg(&target[..], &msg[..]);
+                            if let Some(result) = result {
+                                let _ = server.send_privmsg(&target[..], &result[..]);
+                            }
+                        }
 
                         // Command
                         if msg.starts_with(&prefix) {
@@ -79,6 +105,26 @@ fn main() {
                                 },
                                 [cmd, target, to_say..] if cmd == "me" => {
                                     let _ = server.send_action(target, &to_say.connect(" ")[..]);
+                                },
+                                [cmd, plugin_name] if cmd == "load" => {
+                                    match DynamicLibrary::open(Some(&Path::new(plugin_name))) {
+                                        Ok(library) => {
+                                            match unsafe { library.symbol::<()>(LOADER_NAME) } {
+                                                Ok(symbol) => {
+                                                    let loader: Loader = unsafe { std::mem::transmute(symbol) };
+                                                    let plugin = loader();
+                                                    // unsafe { println!("{} {}", transmute::<_, isize>(loader), transmute::<_, isize>(1i64)); }
+                                                    plugins.push(RenekoPlugin { plugin: plugin, library: library });
+                                                },
+                                                Err(reason) => {
+                                                    let _ = server.send_privmsg(&target[..], &format!("Failed to load plugin: {}", reason)[..]);
+                                                }
+                                            }
+                                        },
+                                        Err(reason) => {
+                                            let _ = server.send_privmsg(&target[..], &format!("Failed to load plugin: {}", reason)[..]);
+                                        }
+                                    }
                                 },
                                 _ => {
                                     // Unknow command

@@ -4,7 +4,15 @@ version = "0.1.0"
 authors = ["Andor Uhlár <andor44@gmail.com>"]
 
 
+[[bin]]
+name = "reneko"
+path = "src/bin/reneko.rs"
+
+[lib]
+name = "kitten"
+path = "src/lib.rs"
+
+
 [dependencies]
 irc = "*"
 log = "*"
-hlua = "*"

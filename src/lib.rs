@@ -2,9 +2,17 @@
 
 extern crate irc;
 
-use irc::client::server::Server;
+use std::io::{BufReader, BufWriter};
 
+use irc::client::server::Server;
+use irc::client::conn::NetStream;
+
+
+pub type KittenServer<'a> = Server<'a, BufReader<NetStream>, BufWriter<NetStream>>;
 
 pub trait Plugin {
-    fn process_privmsg(&self, connection: &Server, source: &str, target: &str, message: &str) -> Option<String>;
+    fn process_privmsg(&self, connection: &KittenServer, source: &str, target: &str, message: &str) -> Option<String>;
 }
+
+pub type PluginLoader = fn() -> Result<Box<Plugin>, String>;
+pub static LOADER_NAME: &'static str = "init_plugin";

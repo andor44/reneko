@@ -91,10 +91,12 @@ fn main() {
                     error!("ERROR: {}", message);
                 },
                 PRIVMSG(target, msg) => {
-                    trace!("[{}]<{}>{}", target, message.get_source_nickname().unwrap(), msg);
+                    let nick = message.get_source_nickname().unwrap_or("UNKNOWN");
+
+                    trace!("[{}]<{}>{}", target, nick, msg);
 
                     for plugin in &plugins {
-                        let result: Option<String> = plugin.plugin.process_privmsg(&server, "me lol", &target, &msg);
+                        let result: Option<String> = plugin.plugin.process_privmsg(&server, nick, &target, &msg);
                         if let Some(result) = result {
                             let _ = server.send_privmsg(&target, &result);
                         }

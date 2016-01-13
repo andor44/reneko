@@ -1,24 +1,50 @@
 #![feature(slice_patterns)]
-#![feature(dynamic_lib)]
 
 extern crate irc;
 #[macro_use] extern crate log;
-extern crate kitten;
+extern crate env_logger;
+extern crate libkitten;
+extern crate libloading;
 
-use std::dynamic_lib::DynamicLibrary;
-use std::path::Path;
-
+use libloading::{Library, Symbol, Result as LibraryResult};
 use irc::client::prelude::*;
 use irc::client::data::command::Command::{PRIVMSG, ERROR};
-
-use kitten::{Plugin, LOADER_NAME, PluginLoader};
+use libkitten::{Plugin, LOADER_NAME, PluginLoader};
 
 struct RenekoPlugin {
     plugin: Box<Plugin>,
-    library: DynamicLibrary,
+    _library: Library,
+}
+
+#[derive(Debug)]
+enum PluginLoadingError {
+    LibraryError(std::io::Error),
+    PluginInitializationError(String),
+}
+
+fn load_plugin(name: &str) -> Result<RenekoPlugin, PluginLoadingError> {
+    let library = Library::new(name);
+    let result = match library {
+        Ok(ref library) => {
+            let symbol: LibraryResult<Symbol<PluginLoader>> = unsafe { library.get(LOADER_NAME.as_bytes()) };
+
+            match symbol {
+                Ok(function) => {
+                    match function() {
+                        Ok(plugin) => Ok(plugin),
+                        Err(e) => Err(PluginLoadingError::PluginInitializationError(e)),
+                    }
+                }
+                Err(e) => Err(PluginLoadingError::LibraryError(e)),
+            }
+        },
+        Err(ref e) => return Err(PluginLoadingError::PluginInitializationError(format!("{}", e))),
+    };
+    result.map(|plugin| RenekoPlugin { plugin: plugin, _library: library.unwrap() })
 }
 
 fn main() {
+    env_logger::init().expect("Unable to initialize logging");
     // Load config file
     let config = if let Some(path) = std::env::args().nth(1) {
         Config::load(&path)
@@ -54,7 +80,7 @@ fn main() {
 
     // Set up plugin stuff
     let mut plugins: Vec<RenekoPlugin> = vec![];
-    DynamicLibrary::prepend_search_path(std::env::current_dir().unwrap().as_path());
+    // DynamicLibrary::prepend_search_path(std::env::current_dir().unwrap().as_path());
 
     // Begin event loop
     for msg in server.iter() {
@@ -62,10 +88,10 @@ fn main() {
         if let Ok(command) = Command::from_message_io(Ok(message.clone())) {
             match command {
                 ERROR(message) => {
-                    println!("ERROR: {}", message);
+                    error!("ERROR: {}", message);
                 },
                 PRIVMSG(target, msg) => {
-                    println!("[{}]<{}>{}", target, message.get_source_nickname().unwrap(), msg);
+                    trace!("[{}]<{}>{}", target, message.get_source_nickname().unwrap(), msg);
 
                     for plugin in &plugins {
                         let result: Option<String> = plugin.plugin.process_privmsg(&server, "me lol", &target, &msg);
@@ -90,12 +116,9 @@ fn main() {
                             [cmd, channel] if cmd == "join" => {
                                 let _ = server.send_join(channel);
                             },
-                            // TODO: part is missing, serious?
-                            /*
                             [cmd, channel] if cmd == "part" || cmd == "leave" => {
-                                let _ = server.send_part(channel);
+                                let _ = server.send(Command::PART(channel.to_owned(), None));
                             },
-                            */
                             [cmd, reason] if cmd == "quit" || cmd == "exit" => {
                                 let reason = if reason.trim().is_empty() { "reneko" } else { reason };
                                 let _ = server.send_quit(reason);
@@ -104,29 +127,9 @@ fn main() {
                                 let _ = server.send_action(target, &to_say.join(" "));
                             },
                             [cmd, plugin_name] if cmd == "load" => {
-                                match DynamicLibrary::open(Some(&Path::new(plugin_name))) {
-                                    Ok(library) => {
-                                        match unsafe { library.symbol::<()>(LOADER_NAME) } {
-                                            Ok(symbol) => {
-                                                let loader: PluginLoader = unsafe { std::mem::transmute(symbol) };
-                                                let plugin = loader();
-                                                match plugin {
-                                                    Ok(plugin) => {
-                                                        plugins.push(RenekoPlugin { plugin: plugin, library: library });
-                                                    },
-                                                    Err(err) => {
-                                                        let _ = server.send_privmsg(&target, &format!("Failed to load plugin: {}", err));
-                                                    }
-                                                }
-                                            },
-                                            Err(reason) => {
-                                                let _ = server.send_privmsg(&target, &format!("Failed to load plugin: {}", reason));
-                                            }
-                                        }
-                                    },
-                                    Err(reason) => {
-                                        let _ = server.send_privmsg(&target, &format!("Failed to load plugin: {}", reason));
-                                    }
+                                match load_plugin(plugin_name) {
+                                    Ok(plugin) => plugins.push(plugin),
+                                    Err(e) => error!("Error loading '{}': {:?}", plugin_name, e)
                                 }
                             },
                             _ => {
@@ -136,7 +139,7 @@ fn main() {
                     }
                 },
                 command => {
-                    println!("Unknown command: {:?}", command);
+                    warn!("Unknown command: {:?}", command);
                 }
             }
         }

@@ -11,6 +11,8 @@ use irc::client::conn::NetStream;
 pub type KittenServer<'a> = Server<'a, BufReader<NetStream>, BufWriter<NetStream>>;
 
 pub trait Plugin {
+    /// Process a private message event. An optionally returned string will be automatically sent
+    /// to the channel or the sender.
     fn process_privmsg(&self, connection: &KittenServer, source: &str, target: &str, message: &str) -> Option<String>;
 }
 

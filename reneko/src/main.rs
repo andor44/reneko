@@ -80,11 +80,13 @@ fn main() {
 
     // Set up plugin stuff
     let mut plugins: Vec<RenekoPlugin> = vec![];
-    // DynamicLibrary::prepend_search_path(std::env::current_dir().unwrap().as_path());
 
     // Begin event loop
     for msg in server.iter() {
-        let message = msg.unwrap().clone();
+        let message = match msg {
+            Ok(message) => message,
+            Err(e) => { error!("Error reading message! {:?}", e); continue; }
+        };
         if let Ok(command) = Command::from_message_io(Ok(message.clone())) {
             match command {
                 ERROR(message) => {
